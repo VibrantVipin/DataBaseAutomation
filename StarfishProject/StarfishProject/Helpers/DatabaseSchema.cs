@@ -1,0 +1,569 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Configuration;
+using System.Data;
+using System.Data.Odbc;
+
+
+namespace StarfishProject.Helpers
+{
+    public class SearchBox
+    {
+        public string column_name { get; set; }
+        public string value { get; set; }
+    }
+    
+    public class Column
+    {
+        public string column_name { get; set; }
+        public string is_editable { get; set; }
+        public string display_name { get; set; }
+        public string referred_table { get; set; }
+        public string data_type { get; set; }
+        public string is_nullable { get; set; }
+    }
+    public class ForeignKey
+    {
+        public string fk_name { get; set; }
+        public string fk_table { get; set; }
+        public string pk_name { get; set; }
+    }
+    public class PrimaryKey
+    {
+        public string pk_name { get; set; }
+        public string pk_data_type { get; set; }
+    }
+    public class Table
+    {
+        public string table_name { get; set; }
+        public string table_display_name { get; set; }
+        public PrimaryKey primaryKey { get; set; }
+        public List<ForeignKey> foreignKeys { get; set; }
+        public List<Column> columns { get; set; }
+
+    }
+    public class DatabaseSchema
+    {
+        public string database { get; set; }
+        public List<Table> tables { get; set; }
+        public DataSet dataset { get; set; }
+    }
+    public class DatabaseManager
+    {
+        public static OdbcConnection EstablishConnection(DatabaseSchema dbs)
+        {
+            string ConnectionString = ConfigurationManager.AppSettings["ConnectionString"];
+            OdbcConnection myAccessConn = null;
+            try
+            {
+                myAccessConn = new OdbcConnection(ConnectionString);
+
+
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error: Failed to create a database connection. \n{0}", ex.Message);
+
+            }
+            return myAccessConn;
+        }
+
+        public static void ExecuteQuery(string tbl, OdbcConnection myAccessConn, DatabaseSchema schema, string query)
+        {
+
+            try
+            {
+               
+                OdbcCommand myAccessCommand = new OdbcCommand(query, myAccessConn);
+                myAccessCommand.CommandTimeout = 5000;
+                OdbcDataAdapter myDataAdapter = new OdbcDataAdapter(myAccessCommand);
+                
+                myDataAdapter.Fill(schema.dataset, tbl);
+                
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error: Failed to retrieve the required data from the DataBase.\n{0}", ex.Message);
+
+            }
+            myAccessConn.Close();
+        }
+
+        //index
+        public static DatabaseSchema BuildDataset()
+        {
+            DatabaseSchema schema = JsonReader.Read();
+            return schema;
+        }
+
+        //Building the data set and returning the schema of that table  
+        public static DatabaseSchema BuildDataset(String tblname, int page)
+        {
+            DatabaseSchema schema = JsonReader.Read();
+            schema.dataset = new DataSet();
+
+            if (!String.IsNullOrEmpty(tblname))
+            {
+
+                OdbcConnection myAccessConn = EstablishConnection(schema);
+
+                foreach (var table in schema.tables)
+                {
+                    if (table.table_name.ToLower().Equals(tblname.ToLower()) || table.table_display_name.ToLower().Equals(tblname.ToLower()))
+                    {
+                        AddKeys(myAccessConn, schema, table.table_name);
+                        getColumnType(myAccessConn, schema, table.table_name);
+                        string query = "";
+                        string countquery = "";
+                        if (table.foreignKeys.Count == 0)
+                        {
+                            query = QueryBuilder.SelectQueryBuilder(table, page,schema);
+                        }
+                        else
+                        {
+                            query = QueryBuilder.JoinQueryBuilder(table, page,schema);
+                        }
+                        countquery = QueryBuilder.BuildCountQuery(query);
+                        ExecuteQuery(table.table_name, myAccessConn, schema, query);
+                        ExecuteQuery("count", myAccessConn, schema, countquery);
+                        break;
+                    }
+                }
+            }
+            return schema;
+        }
+
+        //Building the Searched data set of table with search element and returning the schema of that table
+        public static DatabaseSchema BuildDatasetForSearch(Table tbl, List<SearchBox> searchElement, int page)
+        {
+            DatabaseSchema schema = JsonReader.Read();
+            schema.dataset = new DataSet();
+            OdbcConnection myAccessConn = EstablishConnection(schema);
+            foreach (var table in schema.tables)
+            {
+                if (table.table_name.ToLower().Equals(tbl.table_name.ToLower()) || table.table_display_name.ToLower().Equals(tbl.table_name.ToLower()))
+                {
+
+                    AddKeys(myAccessConn,schema, table.table_name);
+                    getColumnType(myAccessConn, schema, table.table_name);
+                    string query = "";
+                    string countquery = "";
+                    if (table.foreignKeys.Count == 0)
+                    {
+                        query = QueryBuilder.BuildSearchQuery(table, searchElement, page,schema);
+                    }
+                    else
+                    {
+                        query = QueryBuilder.BuildJoinSearchQuery(table, searchElement, page,schema);
+                    }
+                    countquery = QueryBuilder.BuildCountQuery(query);
+                    ExecuteQuery(table.table_name, myAccessConn, schema, query);
+                    ExecuteQuery("count", myAccessConn, schema, countquery);
+                    break;
+                }
+
+            }
+            return schema;
+        }
+
+        //Building the Sorted data set on a column of current table with search element and returning the schema of that table
+        public static DatabaseSchema BuildSortDataset(String tblname, string ColumnName, int page, List<SearchBox> SearchElement)
+        {
+            DatabaseSchema schema = JsonReader.Read();
+            schema.dataset = new DataSet();
+
+            if (!String.IsNullOrEmpty(tblname))
+            {
+
+                OdbcConnection myAccessConn = EstablishConnection(schema);
+
+                foreach (var table in schema.tables)
+                {
+                    if (table.table_name.ToLower().Equals(tblname.ToLower()) || table.table_display_name.ToLower().Equals(tblname.ToLower()))
+                    {
+                        AddKeys(myAccessConn, schema, table.table_name);
+                        string query = "";
+                     
+                        if (table.foreignKeys.Count == 0)
+                        {
+                            query = QueryBuilder.SortQueryBuilder(table, ColumnName, page, SearchElement,schema);
+                        }
+                        else
+                        {
+                            query = QueryBuilder.JoinSortQueryBuilder(table, ColumnName, page, SearchElement,schema);
+                        }
+
+                        ExecuteQuery(table.table_name, myAccessConn, schema, query);
+
+                        break;
+                    }
+                }
+            }
+            return schema;
+        }//Build Sort Data Set
+
+        //Building the data set of table with id and returning the schema of that table
+        public static DatabaseSchema BuildEditDataset(String tblname, string id)
+        {
+            DatabaseSchema schema = JsonReader.Read();
+            schema.dataset = new DataSet();
+
+            if (!String.IsNullOrEmpty(tblname))
+            {
+
+                OdbcConnection myAccessConn = EstablishConnection(schema);
+
+                foreach (var table in schema.tables)
+                {
+                    if (table.table_name.ToLower().Equals(tblname.ToLower()) || table.table_display_name.ToLower().Equals(tblname.ToLower()))
+                    {
+                        AddKeys(myAccessConn, schema, table.table_name);
+                        getColumnType(myAccessConn, schema, table.table_name);
+                        string query = "";
+                        query = QueryBuilder.EditQueryBuilder(table, id);
+                        ExecuteQuery(table.table_name, myAccessConn, schema, query);
+                        addDataForDropdown(schema, table);
+                        break;
+                    }
+                }
+            }
+            return schema;
+        }
+
+        //Deleting row having id in table and returns true or false weather deleted or not
+        public static int BuildDeleteDataset(String tblname, string id)
+        {
+            DatabaseSchema schema = JsonReader.Read();
+            schema.dataset = new DataSet();
+            int i = 0;
+            if (!String.IsNullOrEmpty(tblname))
+            {
+
+                OdbcConnection myAccessConn = EstablishConnection(schema);
+
+                foreach (var table in schema.tables)
+                {
+                    if (table.table_name.ToLower().Equals(tblname.ToLower()) || table.table_display_name.ToLower().Equals(tblname.ToLower()))
+                    {
+                        AddKeys(myAccessConn, schema, table.table_name);
+                        getColumnType(myAccessConn, schema, table.table_name);
+
+                        string query = "";
+
+                        query = QueryBuilder.DeleteQueryBuilder(table, id);
+                        i = ExecuteCmd( myAccessConn, query);
+
+                        break;
+                    }
+                }
+            }
+            return i;
+        }
+
+        //To Add foreign keys 
+        public static void AddKeys(OdbcConnection myAccessConn,DatabaseSchema schema, String tblname)
+        {
+            string query = "";
+             try
+             {
+                 myAccessConn.Open();
+             }
+             catch (Exception e)
+             {
+                 Console.Write(e.Message);
+             }
+            try
+            {
+                foreach (var tbl in schema.tables)
+                {
+                    if (tbl.table_name == tblname)
+                    {
+                        DatabaseSchema fschema = new DatabaseSchema();
+                        if (schema.database == "MySQL")
+                        {
+                            query = "Select COLUMN_NAME as FK_COLUMN_NAME,REFERENCED_TABLE_NAME AS PK_TABLE_NAME,REFERENCED_COLUMN_NAME AS pK_COLUMN_NAME from INFORMATION_SCHEMA.KEY_COLUMN_USAGE where CONSTRAINT_NAME not like \"%PRIMARY%\" and TABLE_NAME =\'" + tblname + "\'";
+
+                        }
+                        else if (schema.database == "SqlServer")
+                        {
+                            query = "SELECT col1.name AS [FK_COLUMN_NAME],tab2.name AS [PK_TABLE_NAME],col2.name AS [pK_COLUMN_NAME] FROM sys.foreign_key_columns fkc INNER JOIN sys.tables tab1 ON tab1.object_id = fkc.parent_object_id INNER JOIN sys.columns col1 ON col1.column_id = parent_column_id AND col1.object_id = tab1.object_id INNER JOIN sys.tables tab2 ON tab2.object_id = fkc.referenced_object_id INNER JOIN sys.columns col2 ON col2.column_id = referenced_column_id AND col2.object_id = tab2.object_id where tab1.name =\'" + tblname + "\'";
+                        }
+                        else
+                        {
+                            query = "SELECT  kcu.column_name As FK_COLUMN_NAME, ccu.table_name As PK_TABLE_NAME,ccu.column_name As pK_COLUMN_NAME FROM information_schema.table_constraints AS tc JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name WHERE constraint_type = 'FOREIGN KEY' AND tc.table_name =\'" + tblname + "\'";
+                        }
+                        try
+                        {
+                            fschema.dataset = new DataSet();
+                            ExecuteQuery(tblname, myAccessConn, fschema, query);
+                        }
+                        catch (Exception e)
+                        {
+                            Console.Write(e.Message);
+                        }
+                        tbl.foreignKeys = new List<ForeignKey>();
+
+                        foreach (DataRow dr in fschema.dataset.Tables[tblname].Rows)
+                        {
+                            ForeignKey fitem = new ForeignKey();
+                            fitem.fk_name = dr["FK_COLUMN_NAME"].ToString();
+                            fitem.fk_table = dr["PK_TABLE_NAME"].ToString();
+                            fitem.pk_name = dr["pK_COLUMN_NAME"].ToString();
+                            tbl.foreignKeys.Add(fitem);
+                        }
+                        break;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Console.Write(e.Message);
+              
+            }
+            
+            
+        }
+
+        //for addding primary key
+        public static string AddPrimaryKeys(OdbcConnection myAccessConn, DatabaseSchema schema, String tblname)
+        {
+            try
+            {
+                myAccessConn.Open();
+            }
+            catch (Exception e)
+            {
+                Console.Write(e.Message);
+            }
+            
+            DatabaseSchema pschema = new DatabaseSchema();
+
+            string query = "SELECT k.column_name AS pk_Column_Name FROM information_schema.table_constraints t JOIN information_schema.key_column_usage k USING(constraint_name,table_name) WHERE t.constraint_type='PRIMARY KEY' AND t.table_name= \'" + tblname + "\'";
+            try
+            {
+                pschema.dataset = new DataSet();
+                ExecuteQuery(tblname, myAccessConn, pschema, query);
+            }
+            catch (Exception e)
+            {
+                Console.Write(e.Message);
+            }
+            string pk="";
+
+         
+
+            foreach (DataRow dr in pschema.dataset.Tables[tblname].Rows)
+            {
+                pk =  dr["pk_Column_Name"].ToString();
+            }
+            return pk;
+        }
+
+        public static string getPrimaryKey(Table tbl)
+        {
+            return tbl.primaryKey.pk_name;
+        }// getPrimary Keys
+
+        public static Table getTableFromName(string tableName,DatabaseSchema schema)
+        {
+            foreach(var table in schema.tables)
+            {
+                if (table.table_name == tableName)
+                {
+                    return table;
+                }
+            }
+            return null;
+        }
+
+        public static ForeignKey getForeignKey(Table current,string reffered)
+        {
+            foreach(var fkey in current.foreignKeys)
+            {
+                if (fkey.fk_table == reffered)
+                    return fkey;
+            }
+            return null;
+        }
+
+        //adding column type of each column in a given table  
+        public static void getColumnType(OdbcConnection myAccessConn, DatabaseSchema schema, String tblname)
+        {
+
+            try
+            {
+                myAccessConn.Open();
+            }
+            catch (Exception e)
+            {
+                Console.Write(e.Message);
+            }
+            foreach (var tbl in schema.tables)
+            {
+                if (tbl.table_name == tblname)
+                {
+                    DataTable dt = new DataTable("col");
+                    // add data type of columns
+                    foreach (var col in tbl.columns)
+                    {
+                        if (col.referred_table==null)
+                            dt = myAccessConn.GetSchema("Columns",new string[] { null,null, tblname, col.column_name });
+                        else
+                            dt = myAccessConn.GetSchema("Columns", new string[] { null, null, col.referred_table, col.column_name });
+                        col.data_type = dt.Rows[0]["Type_Name"].ToString();
+                        col.is_nullable = dt.Rows[0]["NULLABLE"].ToString();
+                    }
+                    // add data type of priimary key
+                    dt = myAccessConn.GetSchema("Columns", new string[] { null, null, tblname,tbl.primaryKey.pk_name });
+                    tbl.primaryKey.pk_data_type= dt.Rows[0]["Type_Name"].ToString();
+
+                }
+            }
+            try
+            {
+                myAccessConn.Close();
+            }
+            catch (Exception e)
+            {
+                Console.Write(e.Message);
+            }
+        }
+
+        //For inserting rows in given table 
+        public static int InsertRow(List<SearchBox> AddElement, Table tbl)
+        {
+            int i = 0;
+            string ConnectionString = ConfigurationManager.AppSettings["ConnectionString"];
+            OdbcConnection myAccessConn = null;
+            try
+            {
+                myAccessConn = new OdbcConnection(ConnectionString);
+
+
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error: Failed to create a database connection. \n{0}", ex.Message);
+
+            }
+
+            string query = QueryBuilder.InsertRowQuery(AddElement, tbl);
+            i = ExecuteCmd(myAccessConn, query);
+
+            return i;
+
+        }
+
+        //add drop down for a table refering another table
+        public static void addDataForDropdown(DatabaseSchema dbs, Table table)
+        {
+            string pk="";
+            if (table.foreignKeys != null)
+            {
+                OdbcConnection myAccessConn = EstablishConnection(dbs);
+
+                foreach (Column col in table.columns)
+                {
+                    if (col.referred_table != null)
+                    {
+                        Table tbl = getTableFromName(col.referred_table, dbs);
+                        if (tbl == null)
+                            pk = AddPrimaryKeys(myAccessConn, dbs , table.table_name);
+                        else 
+                             pk = getPrimaryKey(tbl);
+                        string localaquery = "select distinct " +pk+" , "+ col.column_name + " from " + col.referred_table;
+                        ExecuteQuery(col.column_name, myAccessConn, dbs, localaquery);
+
+                    }
+                }
+
+
+            }
+        }
+
+        //executing query and returning weather the query executed successfully or not
+        public static int ExecuteCmd(OdbcConnection myAccessConn, string query)
+        {
+            OdbcCommand cmd = new OdbcCommand(query);
+            OdbcTransaction transaction = null;
+            cmd.Connection = myAccessConn;
+            int i=0;
+            try
+            {
+                myAccessConn.Open();
+
+                // Start a local transaction
+                transaction = myAccessConn.BeginTransaction();
+
+                // Assign transaction object for a pending local transaction.
+
+                cmd.Transaction = transaction;
+
+                // Execute the commands.
+
+                i = cmd.ExecuteNonQuery();
+
+                // Commit the transaction.
+                transaction.Commit();
+
+                
+            }
+            catch { }
+
+            return i;
+        }
+
+        public static DatabaseSchema getAllColumnInfo(Table table)
+        {
+            DatabaseSchema colschema = JsonReader.Read();
+            colschema.dataset = new DataSet();
+            DataTable dt = new DataTable();
+            OdbcConnection myAccessConn = EstablishConnection(colschema);
+            foreach (Table tbl in colschema.tables)
+            {
+                if (tbl.table_name == table.table_name)
+                {
+                    try
+                    {
+                        myAccessConn.Open();
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine(e.Message);
+                    }
+                    foreach (var col in tbl.columns)
+                    {
+                        dt.Merge(myAccessConn.GetSchema("Columns", new string[] { null, null, table.table_name, col.column_name }));
+                    }
+                    break;
+                }
+            }
+            colschema.dataset.Tables.Add(dt);
+            return colschema;
+        }
+
+        //Updating a row with changed values of id in current table and returning weather the query updated successfully or not
+        public static int UpdateRow(List<SearchBox> AddElement, Table tbl,string id)
+        {
+            int i = 0;
+            string ConnectionString = ConfigurationManager.AppSettings["ConnectionString"];
+            OdbcConnection myAccessConn = null;
+            try
+            {
+                myAccessConn = new OdbcConnection(ConnectionString);
+
+
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error: Failed to create a database connection. \n{0}", ex.Message);
+
+            }
+
+            string query = QueryBuilder.UpdateRowQuery(AddElement, tbl,id);
+            i = ExecuteCmd(myAccessConn, query);
+
+            return i;
+        }
+    }
+}
